@@ -142,6 +142,10 @@ class MitsubishiUART : public PollingComponent, public climate::Climate, public 
   // Publishes climate state
   void do_publish_();
 
+  // When low/high setpoints must be pushed apart, decides which one to preserve.
+  // Returns true if the low (heat) setpoint should be kept and the high one moved.
+  bool low_setpoint_has_priority_(const climate::ClimateCall &call, bool high_changed);
+
  private:
   // Default climate_traits for MITP
   climate::ClimateTraits climate_traits_ = []() -> climate::ClimateTraits {

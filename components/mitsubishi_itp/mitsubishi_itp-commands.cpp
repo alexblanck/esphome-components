@@ -68,17 +68,16 @@ void MitsubishiUART::control(const climate::ClimateCall &call) {
 
   if (target_temperature_high - target_temperature_low < 2) {
     ITP_LOGW(TAG, "Target temperatures must be at least 2°C apart!");
-    if (high_changed) {
-      target_temperature_low = target_temperature_high - 2;
-      if (thermostat_) {
-        thermostat_->set_heat_setpoint(target_temperature_low);
-      }
-    } else {
-      // In the event that they *both* changed, we'll still just bump the high temperature because trying to take the
-      // mean or something might be weird.
+    // Preserve the setpoint the heat pump will actually use (see low_setpoint_has_priority_) and move the other one.
+    if (low_setpoint_has_priority_(call, high_changed)) {
       target_temperature_high = target_temperature_low + 2;
       if (thermostat_) {
         thermostat_->set_cooldry_setpoint(target_temperature_high);
+      }
+    } else {
+      target_temperature_low = target_temperature_high - 2;
+      if (thermostat_) {
+        thermostat_->set_heat_setpoint(target_temperature_low);
       }
     }
   }
@@ -182,6 +181,52 @@ void MitsubishiUART::control(const climate::ClimateCall &call) {
   // Publish state and any sensor changes (shouldn't be any a result of this function, but
   // since they lazy-publish, no harm in trying)
   do_publish_();
+}
+
+bool MitsubishiUART::low_setpoint_has_priority_(const climate::ClimateCall &call, const bool high_changed) {
+  // Use the mode this call is switching to, if any; otherwise the current mode.
+  const climate::ClimateMode effective_mode = call.get_mode().has_value() ? call.get_mode().value() : mode;
+
+  switch (effective_mode) {
+    case climate::CLIMATE_MODE_HEAT:
+      // HEAT runs on the low setpoint
+      return true;
+    case climate::CLIMATE_MODE_COOL:
+    case climate::CLIMATE_MODE_DRY:
+      // COOL and DRY run on the high setpoint
+      return false;
+    case climate::CLIMATE_MODE_OFF:
+    case climate::CLIMATE_MODE_FAN_ONLY: {
+      // Neither setpoint is in use, so protect the one for the mode the heat pump last reported. It keeps reporting
+      // its heat/cool/dry mode while powered off. In fan mode it reports fan instead, so for FAN_ONLY this only helps
+      // on the call that switches into it; after that, fall through to legacy behavior. Covers i-See
+      // (0x09/0x0A/0x0B) and Kumo auto-heat/cool (0x21/0x23) variants.
+      auto last_settings = itp_sys_state_.check_heatpump_cache<SettingsGetResponsePacket>(30000U);
+      if (last_settings) {
+        switch (last_settings->get_mode()) {
+          case 0x01:  // Heat
+          case 0x09:  // i-See Heat
+          case 0x21:  // Auto-Heat
+            return true;
+          case 0x02:  // Dry
+          case 0x0A:  // i-See Dry
+          case 0x03:  // Cool
+          case 0x0B:  // i-See Cool
+          case 0x23:  // Auto-Cool
+            return false;
+          default:
+            break;
+        }
+      }
+      break;
+    }
+    default:
+      // HEAT_COOL (or unknown): both setpoints matter, fall through to legacy behavior
+      break;
+  }
+
+  // Legacy behavior: preserve whichever setpoint was changed. If both changed, preserve the high setpoint.
+  return !high_changed;
 }
 
 bool MitsubishiUART::select_vane_position(const std::string &state) {
