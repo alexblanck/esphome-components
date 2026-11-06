@@ -113,6 +113,9 @@ class MitsubishiUART : public PollingComponent, public climate::Climate, public 
     }
   }
 
+  // Minimum distance (°C) enforced between low/high setpoints. 0 allows equal (but not inverted) setpoints.
+  void set_min_setpoint_gap(const float gap) { min_setpoint_gap_ = gap; }
+
   // Turns on or off MHK Fahrenheit conversion correction
   void set_mhk_f_correction(const bool enabled) {
     if (thermostat_) {
@@ -176,6 +179,9 @@ class MitsubishiUART : public PollingComponent, public climate::Climate, public 
   // ITP Heatpump/Thermostat
   Heatpump heatpump_;
   std::unique_ptr<Thermostat> thermostat_ = nullptr;
+
+  // Minimum distance (°C) between low/high setpoints
+  float min_setpoint_gap_ = 2.0f;
 
   // Should we call publish on the next update?
   bool publish_on_update_ = false;

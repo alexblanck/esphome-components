@@ -66,16 +66,19 @@ void MitsubishiUART::control(const climate::ClimateCall &call) {
     }
   }
 
-  if (target_temperature_high - target_temperature_low < 2) {
-    ITP_LOGW(TAG, "Target temperatures must be at least 2°C apart!");
+  // With a gap of 0, equal setpoints are allowed but inverted ones (low > high) are still corrected, matching
+  // Home Assistant's own validation. Inversions set from an MHK2 arrive via state upload and aren't touched here.
+  if (target_temperature_high - target_temperature_low < min_setpoint_gap_) {
+    ITP_LOGW(TAG, "Target temperatures must be at least %.1f°C apart (low %.1f, high %.1f)", min_setpoint_gap_,
+             target_temperature_low, target_temperature_high);
     // Preserve the setpoint the heat pump will actually use (see low_setpoint_has_priority_) and move the other one.
     if (low_setpoint_has_priority_(call, high_changed)) {
-      target_temperature_high = target_temperature_low + 2;
+      target_temperature_high = target_temperature_low + min_setpoint_gap_;
       if (thermostat_) {
         thermostat_->set_cooldry_setpoint(target_temperature_high);
       }
     } else {
-      target_temperature_low = target_temperature_high - 2;
+      target_temperature_low = target_temperature_high - min_setpoint_gap_;
       if (thermostat_) {
         thermostat_->set_heat_setpoint(target_temperature_low);
       }

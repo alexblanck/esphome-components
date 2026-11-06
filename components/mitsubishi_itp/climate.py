@@ -23,6 +23,12 @@ CONF_ENHANCED_MHK_SUPPORT = (
     "enhanced_mhk"  # EXPERIMENTAL. Will be set to default eventually.
 )
 CONF_MHK_F_CORRECTION = "mhk_fahrenheit_correction"
+# Minimum difference between low (heat) and high (cool) setpoints, stored in °C.
+# 0 allows equal setpoints; inverted setpoints (low > high) are still corrected.
+CONF_MIN_SETPOINT_GAP = "minimum_setpoint_gap"
+# In HEAT_COOL the gap is the only deadband for MITP's own heat/cool changeover, so
+# smaller gaps are only allowed with HEAT_COOL disabled.
+HEAT_COOL_MIN_SETPOINT_GAP = 2.0
 
 DEFAULT_POLLING_INTERVAL = "5s"
 
@@ -32,7 +38,21 @@ CUSTOM_FAN_MODES = {"VERYHIGH": itp_packet_ns.FAN_MODE_VERYHIGH}
 
 validate_custom_fan_modes = cv.enum(CUSTOM_FAN_MODES, upper=True)
 
-CONFIG_SCHEMA = (
+
+def validate_min_setpoint_gap(config):
+    if config[CONF_MIN_SETPOINT_GAP] < HEAT_COOL_MIN_SETPOINT_GAP and "HEAT_COOL" in [
+        str(mode).upper() for mode in config[CONF_SUPPORTED_MODES]
+    ]:
+        raise cv.Invalid(
+            f"{CONF_MIN_SETPOINT_GAP} below {HEAT_COOL_MIN_SETPOINT_GAP}°C requires HEAT_COOL to be "
+            f"removed from {CONF_SUPPORTED_MODES} (it's included by default). In HEAT_COOL, too small "
+            "a gap could cause rapid switching between heating and cooling.",
+            path=[CONF_MIN_SETPOINT_GAP],
+        )
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
     climate.climate_schema(MitsubishiUART)
     .extend(
         {
@@ -51,9 +71,14 @@ CONFIG_SCHEMA = (
             ),
             cv.Optional(CONF_ENHANCED_MHK_SUPPORT, default=False): cv.boolean,
             cv.Optional(CONF_MHK_F_CORRECTION, default=False): cv.boolean,
+            # Accepts units ("2°C", "3.6°F", "2K"); a bare number is °C.
+            cv.Optional(CONF_MIN_SETPOINT_GAP, default="2°C"): cv.All(
+                cv.temperature_delta, cv.Range(min=0.0, max=10.0)
+            ),
         }
     )
-    .extend(cv.polling_component_schema(DEFAULT_POLLING_INTERVAL))
+    .extend(cv.polling_component_schema(DEFAULT_POLLING_INTERVAL)),
+    validate_min_setpoint_gap,
 )
 
 
@@ -119,6 +144,8 @@ async def to_code(config):
 
     if CONF_CUSTOM_FAN_MODES in config and len(config[CONF_CUSTOM_FAN_MODES]) > 0:
         cg.add(mitp_component.set_supported_custom_fan_modes(config[CONF_CUSTOM_FAN_MODES]))
+
+    cg.add(mitp_component.set_min_setpoint_gap(config[CONF_MIN_SETPOINT_GAP]))
 
     # Debug Settings
     if enhanced_mhk_protocol := config.get(CONF_ENHANCED_MHK_SUPPORT):
